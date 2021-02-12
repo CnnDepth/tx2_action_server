@@ -2,16 +2,19 @@
 # coding=utf-8
 import rospy
 from gazebo_msgs.srv import GetModelState
-from gazebo_msgs.msg import ModelState
+from gazebo_msgs.msg import ModelState, ModelStates
 from geometry_msgs.msg import Pose, PoseStamped
 from nav_msgs.msg import Path
 import math
 import tf
 import timeit
 
+global trajectory
+trajectory = []
+
 def transform(x, y, start_x, start_y, start_angle):
-    new_x = x * math.cos(start_angle) + y * math.sin(start_angle) + start_x
-    new_y = (-x) * math.sin(start_angle) + y * math.cos(start_angle) + start_y
+    new_x = x * math.cos(start_angle) - y * math.sin(start_angle) + start_x
+    new_y = x * math.sin(start_angle) + y * math.cos(start_angle) + start_y
     return new_x, new_y
 
 def inverse_transform(x, y, start_x, start_y, start_angle):
@@ -27,7 +30,9 @@ class TurtlebotMover:
 		         max_linear_speed=0.5,
 		         trajectory_type='line',
 		         rate=50,
-		         ground_z='auto'
+		         ground_z='auto',
+		         avoid_walls=True,
+		         check_localization=True
 		         ):
 		self.model_name = name
 		self.get_state = rospy.ServiceProxy('/gazebo/get_model_state', GetModelState)
@@ -56,6 +61,34 @@ class TurtlebotMover:
 		self.path = Path()
 		self.true_path_publisher = rospy.Publisher('/true_path', Path, queue_size=0)
 		self.update_true_path()
+		self.avoid_walls = avoid_walls
+		self.check_localization = check_localization
+		if self.check_localization:
+			def callback(data):
+				trajectory.append(data.poses[-1].pose)
+			self.path_subscriber = rospy.Subscriber('mapPath', Path, callback)
+
+	def get_wall_coords(self):
+		def callback(data):
+			global model_states
+			model_states = data
+
+		global model_states
+		model_states = None
+		subscriber = rospy.Subscriber('gazebo/model_states', ModelStates, callback)
+		rospy.sleep(0.01)
+		model_names = model_states.name
+		model_poses = model_states.pose
+		wall_ids = [i for i in range(len(model_names)) if 'wall' in model_names[i].lower()]
+		wall_poses = [model_poses[i] for i in wall_ids]
+		self.wall_coords = []
+		for pose in wall_poses:
+			if pose.position.z < 1:
+				continue
+			if abs(pose.orientation.z) < 1e-5:
+				self.wall_coords.append([(pose.position.x - 3.75, pose.position.y), (pose.position.x + 3.75, pose.position.y)])
+			else:
+				self.wall_coords.append([(pose.position.x, pose.position.y - 3.75), (pose.position.x, pose.position.y + 3.75)])
 
 	def get_pose_in_rviz_coords(self):
 		current_pose_local = PoseStamped()
@@ -160,12 +193,16 @@ class TurtlebotMover:
 		self.state.pose.orientation.w = quaternion[3]
 		self.state_publisher.publish(self.state)
 
-	def move_forward_to(self, target_x, target_y):
+	def move_forward_to(self, target_x, target_y, exploration_goal=None):
 		current_pose = self.state.pose.position
 		current_x, current_y = current_pose.x, current_pose.y
 		dx, dy = target_x - current_x, target_y - current_y
+		if self.check_localization:
+			dst_to_target = 1e9
 		# move robot with speed of self.linear_speed
 		moving_time = math.sqrt(dx ** 2 + dy ** 2) / self.linear_speed
+		n_increase = 0
+		eps = 1e-4
 		for i in range(int(moving_time * self.rate)):
 			start_time = timeit.default_timer()
 			alpha = i / (moving_time * self.rate)
@@ -182,6 +219,23 @@ class TurtlebotMover:
 			self.state_publisher.publish(self.state)
 			self.update_true_path()
 			rospy.sleep(1. / self.rate - (timeit.default_timer() - start_time))
+			if self.check_localization:
+				if len(trajectory) == 0:
+					print('[WARNING]: Estimated trajectory is not published but check_localization parameter is set to True')
+					continue
+				if exploration_goal is None:
+					print('Exploration goal not found but check_localization parameter is set to True')
+				cur_dst = math.sqrt((exploration_goal[0] - trajectory[-1].position.x) ** 2 + \
+                                    (exploration_goal[1] - trajectory[-1].position.y) ** 2)
+				print(cur_dst, dst_to_target)
+				if cur_dst > dst_to_target - eps:
+					n_increase += 1
+				else:
+					n_increase = 0
+				if n_increase > 20:
+					print('Seems to move beyond the target. I am stopping')
+					return
+				dst_to_target = cur_dst
 		# after smooth moving, set target position
 		self.state.pose.position.x = target_x
 		self.state.pose.position.y = target_y
@@ -213,7 +267,7 @@ class TurtlebotMover:
 			self.update_true_path()
 			rospy.sleep(1. / self.rate - (timeit.default_timer() - start_time))
 
-	def move_to(self, x, y):
+	def move_to(self, x, y, exploration_goal=None):
 		# moves robot to point (x, y, 0) in GLOBAL coordinate system
 		true_state = self.get_state(self.model_name, '')
 		self.state.pose = true_state.pose
@@ -223,7 +277,7 @@ class TurtlebotMover:
 		cur_z = position.z
 		if self.trajectory_type == 'line':
 			self.rotate_to(math.atan2(y - cur_y, x - cur_x))
-			self.move_forward_to(x, y)
+			self.move_forward_to(x, y, exploration_goal)
 		elif self.trajectory_type == 'circle':
 			# calculate r_opt - circle radius which let robot move with maximum linear and angular speed
 			r_opt = self.linear_speed / self.angular_speed
@@ -259,6 +313,6 @@ class TurtlebotMover:
 			# move robot along chosen circle, from source angle to target angle, and after move it forwardly to destination
 			if abs(alpha) > 1e-5:
 				self.move_along_circle(center_x, center_y, r, src_circ_angle, trg_circ_angle, 2 * (alpha > 0) - 1)
-			self.move_forward_to(x, y)
+			self.move_forward_to(x, y, exploration_goal)
 		else:
 			raise NotImplementedError
