@@ -16,6 +16,8 @@ from copy import copy
 global trajectory
 trajectory = []
 
+DEFAULT_TOLERANCE = 1
+
 def callback(msg):
     trajectory.append(msg.pose.pose)
 
@@ -23,12 +25,14 @@ class MoveRobot:
     def __init__(self):
         
         rospy.init_node('tx2_action_server')
+        tolerance = rospy.get_param('tolerance', DEFAULT_TOLERANCE)
         self.server = actionlib.SimpleActionServer( 'move_base', MoveBaseAction, self.execute, False )
         self.server.start()
         self.goal_publisher = rospy.Publisher('/exploration_goal', PoseStamped, queue_size=5)
         self.task_publisher = rospy.Publisher('/task', Float32MultiArray, queue_size=5)
         self.Subscriber = rospy.Subscriber('odom', Odometry, callback)
         self.tf_listener = tf.TransformListener()
+        self.tolerance = tolerance
 
     def get_robot_pose(self):
         try:
@@ -48,13 +52,13 @@ class MoveRobot:
         current_y_new += pos[1]
         return current_x_new, current_y_new
 
-    def wait_until_come(self, target_x, target_y, tolerance=2., timeout=30, rate=10):
+    def wait_until_come(self, target_x, target_y, timeout=30, rate=10):
         start_time = time.time()
         succeeded = False
         while not succeeded:
             current_x_new, current_y_new = self.get_robot_pose()
             dst_to_goal = math.sqrt((current_x_new -  target_x) ** 2 + (current_y_new - target_y) ** 2)
-            if dst_to_goal < tolerance:
+            if dst_to_goal < self.tolerance:
                 print('Goal reached!')
                 succeeded = True
             time.sleep(1.0 / rate)
