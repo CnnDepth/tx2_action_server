@@ -25,7 +25,8 @@ class MoveRobot:
     def __init__(self):
         
         rospy.init_node('tx2_action_server')
-        tolerance = rospy.get_param('tolerance', DEFAULT_TOLERANCE)
+        tolerance = rospy.get_param('~tolerance', DEFAULT_TOLERANCE)
+        print('TOLERANCE IS', tolerance)
         self.server = actionlib.SimpleActionServer( 'move_base', MoveBaseAction, self.execute, False )
         self.server.start()
         self.goal_publisher = rospy.Publisher('/exploration_goal', PoseStamped, queue_size=5)
@@ -64,7 +65,8 @@ class MoveRobot:
             time.sleep(1.0 / rate)
             if time.time() - start_time > timeout:
                 print('Goal timed out!')
-                succeeded = True
+                break
+        return succeeded
 
     def publish_pathplanning_task(self, start_x, start_y, goal_x, goal_y):
         task = Float32MultiArray()
@@ -83,8 +85,11 @@ class MoveRobot:
         self.goal_publisher.publish(goal.target_pose)
         robot_x, robot_y = self.get_robot_pose()
         self.publish_pathplanning_task(robot_x, robot_y, target_x, target_y)
-        self.wait_until_come(target_x, target_y)
-        self.server.set_succeeded()
+        goal_reached = self.wait_until_come(target_x, target_y)
+        if goal_reached:
+            self.server.set_succeeded()
+        else:
+            self.server.set_aborted()
 
 if __name__ == '__main__':
     server = MoveRobot()
