@@ -13,25 +13,27 @@ Is used with [m-explore](https://github.com/cnndepth/m-explore) exploration node
   
 ## Usage
 
-### With external navigation (e.g. from keyboard)
-
 rosrun tx2_action_server tx2_action_server_external_driver.py
 
-### With embedded navigation
+### Parameters
 
-TODO
+* `tolerance` (float): distance (in meters) to consider goal as reached. Default value: 1
+* `timeout` (float): time (in seconds) to wait for reaching the goal. If this time is exceeded, navigation will be aborted. Default value: 30
+* `rate` (float): frequency (in Hz) of checking robot's pose and path planning. Default value: 10
+* `max_path_fails` (int): maximum number of path planning fails. If path planning fails more times, navigation will be aborted. Default value: 5
 
-## Input and output
+### Input and output
 
-### Subscribed topics
+#### Subscribed topics
 
 * odom (`nav_msgs::Odometry`) - robot's position
+* path (`nav_msgs::Path`) - path from robot's position to goal
 * tf - transform from map frame to odom_frame
 
-### Used servers
+#### Used servers
 * move_base (`actionlib.SimpleActionServer`)
 
-### Published topics
+#### Published topics
 
 * exploration_goal (`geometry_msgs::PoseStamped`) - position of goal
 * task (`std_msgs::Float32MultiArray`) - coordinates for path planner
