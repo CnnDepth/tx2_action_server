@@ -80,6 +80,7 @@ class MoveRobot:
         succeeded = False
         while time.time() - start_time < self.timeout:
             current_x_new, current_y_new = self.get_robot_pose()
+            self.goal_publisher.publish(self.goal.target_pose)
             self.publish_pathplanning_task(current_x_new, current_y_new, target_x, target_y)
             dst_to_goal = math.sqrt((current_x_new -  target_x) ** 2 + (current_y_new - target_y) ** 2)
             # if we reach the goal, finish with success
@@ -94,6 +95,8 @@ class MoveRobot:
             if n_path_fails >= self.max_path_fails:
                 print('Goal unavailable: path not found!')
                 break
+        if time.time() - start_time > self.timeout and not succeeded:
+            print('Goal timed out!')
         return succeeded
 
     def publish_pathplanning_task(self, start_x, start_y, goal_x, goal_y):
@@ -107,6 +110,7 @@ class MoveRobot:
         self.task_publisher.publish(task)
 
     def execute( self, goal ):
+        self.goal = goal
         pose = goal.target_pose
         target_x, target_y = pose.pose.position.x, pose.pose.position.y
         print( "Recieved goal: {}, {}".format(target_x, target_y))
