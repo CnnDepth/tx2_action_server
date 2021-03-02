@@ -17,6 +17,8 @@ global trajectory
 trajectory = []
 
 DEFAULT_TOLERANCE = 1
+DEFAULT_RATE = 10
+DEFAULT_TIMEOUT = 30
 
 def callback(msg):
     trajectory.append(msg.pose.pose)
@@ -26,6 +28,8 @@ class MoveRobot:
         
         rospy.init_node('tx2_action_server')
         tolerance = rospy.get_param('~tolerance', DEFAULT_TOLERANCE)
+        rate = rospy.get_param('~rate', DEFAULT_RATE)
+        timeout = rospy.get_param('~timeout', DEFAULT_TIMEOUT)
         print('TOLERANCE IS', tolerance)
         self.server = actionlib.SimpleActionServer( 'move_base', MoveBaseAction, self.execute, False )
         self.server.start()
@@ -34,6 +38,8 @@ class MoveRobot:
         self.Subscriber = rospy.Subscriber('odom', Odometry, callback)
         self.tf_listener = tf.TransformListener()
         self.tolerance = tolerance
+        self.rate = rospy.Rate(rate)
+        self.timeout = timeout
 
     def get_robot_pose(self):
         try:
@@ -53,19 +59,17 @@ class MoveRobot:
         current_y_new += pos[1]
         return current_x_new, current_y_new
 
-    def wait_until_come(self, target_x, target_y, timeout=30, rate=10):
+    def wait_until_come(self, target_x, target_y):
         start_time = time.time()
         succeeded = False
-        while not succeeded:
+        while not succeeded and time.time() - start_time < self.timeout:
             current_x_new, current_y_new = self.get_robot_pose()
+            self.publish_pathplanning_task(current_x_new, current_y_new, target_x, target_y)
             dst_to_goal = math.sqrt((current_x_new -  target_x) ** 2 + (current_y_new - target_y) ** 2)
             if dst_to_goal < self.tolerance:
                 print('Goal reached!')
                 succeeded = True
-            time.sleep(1.0 / rate)
-            if time.time() - start_time > timeout:
-                print('Goal timed out!')
-                break
+            self.rate.sleep()
         return succeeded
 
     def publish_pathplanning_task(self, start_x, start_y, goal_x, goal_y):
@@ -83,8 +87,6 @@ class MoveRobot:
         target_x, target_y = pose.pose.position.x, pose.pose.position.y
         print( "Recieved goal: {}, {}".format(target_x, target_y))
         self.goal_publisher.publish(goal.target_pose)
-        robot_x, robot_y = self.get_robot_pose()
-        self.publish_pathplanning_task(robot_x, robot_y, target_x, target_y)
         goal_reached = self.wait_until_come(target_x, target_y)
         if goal_reached:
             self.server.set_succeeded()
