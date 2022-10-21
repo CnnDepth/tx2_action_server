@@ -10,7 +10,7 @@ import time
 from geometry_msgs.msg import PoseStamped, Point
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal, MoveBaseActionGoal
 from nav_msgs.msg import Odometry, Path
-from std_msgs.msg import Float32MultiArray, MultiArrayDimension
+from std_msgs.msg import Float32MultiArray, MultiArrayDimension, String
 from copy import copy
 
 current_pose = []
@@ -31,9 +31,10 @@ class MoveRobot:
         timeout = rospy.get_param('~timeout', DEFAULT_TIMEOUT)
         max_path_fails = rospy.get_param('~max_path_fails', DEFAULT_N_FAILS)
         print('TOLERANCE IS', tolerance)
-        self.server = actionlib.SimpleActionServer( 'move_base', MoveBaseAction, self.execute, False )
+        self.server = actionlib.SimpleActionServer('move_base', MoveBaseAction, self.execute, False )
         self.server.start()
         self.goal_publisher = rospy.Publisher('/exploration_goal', PoseStamped, queue_size=5)
+        self.result_publisher = rospy.Publisher('/goal_nav_result', String, queue_size=5)
         self.task_publisher = rospy.Publisher('/task', Float32MultiArray, queue_size=5)
         self.tolerance = tolerance
         self.rate = rospy.Rate(rate)
@@ -43,11 +44,11 @@ class MoveRobot:
         self.path = []
         self.path_received = False
         self.tf_listener = tf.TransformListener()
-        self.odom_subscriber = rospy.Subscriber('odom', Odometry, self.odom_callback)
+        self.odom_subscriber = rospy.Subscriber('true_pose', PoseStamped, self.odom_callback)
         self.path_subscriber = rospy.Subscriber('path', Path, self.path_callback)
 
     def odom_callback(self, msg):
-        self.current_pose = msg.pose.pose
+        self.current_pose = msg.pose
 
     def path_callback(self, msg):
         self.path_received = True
@@ -106,6 +107,7 @@ class MoveRobot:
         task.layout.dim[0].label = "width"
         task.layout.dim[0].size  = 4
         task.layout.dim[0].stride  = 4
+        #print(start_x, start_y, goal_x, goal_y)
         task.data = [start_x, start_y, goal_x, goal_y]
         self.task_publisher.publish(task)
 
@@ -116,10 +118,16 @@ class MoveRobot:
         print( "Recieved goal: {}, {}".format(target_x, target_y))
         self.goal_publisher.publish(goal.target_pose)
         goal_reached = self.wait_until_come(target_x, target_y)
+        result_msg = String()
         if goal_reached:
+            print('SET SUCCEEDED')
             self.server.set_succeeded()
+            result_msg.data = "SUCCEEDED"
         else:
+            print('SET ABORTED')
             self.server.set_aborted()
+            result_msg.data = "ABORTED"
+        self.result_publisher.publish(result_msg)
 
 if __name__ == '__main__':
     server = MoveRobot()
